@@ -1,0 +1,50 @@
+// usage: node tests/notation.test.js ../piano-trainer.html  — notation model tests + mocked-canvas render smoke test
+const fs=require('fs'),h=fs.readFileSync(process.argv[2]||'piano-trainer.html','utf8'),js=h.split('<script>')[1].split('/*END*/')[0],ls={getItem:()=>null,setItem(){}};
+const X=new Function('localStorage',js+';return{Notation,mk,Session,SONGS,DB}')(ls),{Notation:N,mk,Session,SONGS}=X;
+let f=0,n=0;const ok=(t,c)=>{n++;if(!c){f++;console.log('FAIL',t)}else console.log('ok  ',t)};
+const song=(rh,lh='',bpb=4,o={})=>Object.assign(mk('t','t','x','b',60,bpb,rh,lh,1),o),notes=(M,st)=>M.events.filter(e=>!e.rest&&(!st||e.staff==st));
+let M=N.build(song('C5:1'));ok('treble note',notes(M)[0].staff=='T'&&notes(M)[0].notes[0].dia==35);
+M=N.build(song('','C3:1'));ok('bass note',notes(M)[0].staff=='B'&&notes(M)[0].notes[0].dia==21);
+M=N.build(song('F#4:1'));ok('sharp',notes(M)[0].notes[0].acc=='#');
+M=N.build(song('Bb4:1'));ok('flat',notes(M)[0].notes[0].acc=='b');
+M=N.build(song('Bb4:1 B4:1'));ok('natural after flat in same bar',notes(M)[1].notes[0].acc=='n');
+M=N.build(song('Bb4:1',"",4,{key:'F major'}));ok('Bb in F major: no accidental (key sig)',notes(M)[0].notes[0].acc==null);
+M=N.build(song('F#4:1',"",4,{key:'G major'}));ok('F# in G major: no accidental',notes(M)[0].notes[0].acc==null);
+M=N.build(song('F4:1',"",4,{key:'G major'}));ok('F natural in G major shows natural',notes(M)[0].notes[0].acc=='n');
+M=N.build(song('C4:1 C4:1 C4:1 C4:1 C4:1 C4:1 C4:1 C4:1'));ok('accidental does not carry over the barline',N.build(song('C#4:4 C4:4')).events.filter(e=>!e.rest)[1].notes[0].acc==null&&M.nM==2);
+M=N.build(song('C4+E4+G4:2'));ok('chord = one event, 3 notes, one stem dir',notes(M).length==1&&notes(M)[0].notes.length==3&&!!notes(M)[0].stem&&notes(M)[0].notes.map(x=>x.i).join()=='0,1,2');
+M=N.build(song('C4:1'));ok('quarter note',notes(M)[0].type=='quarter'&&notes(M)[0].dots==0);
+M=N.build(song('C4:.5'));ok('eighth note',notes(M)[0].type=='eighth');
+M=N.build(song('C4:.25 C4:.25'));ok('sixteenth',notes(M)[0].type=='sixteenth');
+M=N.build(song('C4:1.5'));ok('dotted quarter',notes(M)[0].type=='quarter'&&notes(M)[0].dots==1);
+M=N.build(song('C4:3'));ok('dotted half',notes(M)[0].type=='half'&&notes(M)[0].dots==1);
+M=N.build(song('C4:.75'));ok('dotted eighth',notes(M)[0].type=='eighth'&&notes(M)[0].dots==1);
+M=N.build(song('C4:4'));ok('whole note',notes(M)[0].type=='whole');
+M=N.build(song('C4:1 R:1 D4:2'));const rs=M.events.filter(e=>e.rest&&e.staff=='T');ok('rest generated from timeline gap (treble quarter rest @1)',rs.length==1&&rs[0].type=='quarter'&&rs[0].s==1);
+ok('empty staff gets whole-measure rest',M.events.some(e=>e.rest&&e.staff=='B'&&e.full&&e.type=='whole'));
+M=N.build(song('C4:1 R:.5 D4:.5 R:2'));ok('eighth rest',M.events.some(e=>e.rest&&e.staff=='T'&&e.type=='eighth'&&e.s==1));
+M=N.build(song('C4:4 C4:4'));ok('measure boundaries 4/4',M.nM==2&&N.measureAt(M,3.99)==1&&N.measureAt(M,4)==2&&M.mlen==4);
+M=N.build(song('C4:3 C4:3',"",3));ok('3/4 measures',M.mlen==3&&M.nM==2&&N.measureAt(M,3)==2);
+const s68=song('C4:.5 D4:.5 E4:.5 F4:.5 G4:.5 A4:.5',"",3,{ts:[6,8]});M=N.build(s68);ok('6/8 mlen 3 and 2 beam groups of 3',M.mlen==3&&M.beams.length==2&&M.beams.every(r=>r.length==3));
+M=N.build(song('C4:.5 D4:.5 E4:.5 F4:.5 G4:.5 A4:.5 B4:.5 C5:.5'));ok('4/4 eighths beam in pairs per beat',M.beams.length==4&&M.beams.every(r=>r.length==2));
+M=N.build(song('C4:.5 R:.5 D4:.5 E4:.5'));ok('beam broken by rest',M.beams.length==1&&M.beams[0].length==2);
+ok('key signatures',N.keySig('G major').n==1&&N.keySig('G major').alt.F==1&&N.keySig('Bb major').n==-2&&N.keySig('Bb major').alt.E==-1&&N.keySig('Eb major').n==-3&&N.keySig('Dm').n==-1&&N.keySig('Bm').n==2&&N.keySig('Em').n==1&&N.keySig('A major').n==3&&N.keySig('D major').n==2&&N.keySig('Am').n==0);
+const cr=song('C4:6');M=N.build(cr);const ne=notes(M);ok('note crossing barline splits into tied pieces of ONE engine note',cr.notes.length==1&&ne.length==2&&ne[0].notes[0].i==0&&ne[1].notes[0].i==0&&ne[0].notes[0].tieNext&&ne[1].notes[0].tiePrev&&!ne[1].notes[0].first&&ne[0].notes[0].tieTo==4);
+M=N.build(song('C4:2.5'));ok('odd duration decomposes with tie (half+eighth)',notes(M).length==2&&notes(M)[1].type=='eighth');
+M=N.build(cr);ok('current measure calculation',N.measureAt(M,0)==1&&N.measureAt(M,5)==2&&N.measureAt(M,-4)==1&&N.measureAt(M,99)==M.nM);
+const sq=song('C4:1 D4:1 E4:2');M=N.build(sq);ok('current note calculation',N.activeAt(M,0.5).join()=='0'&&N.activeAt(M,1.5).join()=='1'&&N.activeAt(M,3).join()=='2'&&N.activeAt(M,4).length==0);
+ok('tempo scaling beats<->ms',Math.abs(N.beatAtMs(sq,1,1000)-1)<1e-9&&Math.abs(N.beatAtMs(sq,.5,1000)-.5)<1e-9&&N.msAtBeat(sq,.5,4)==8000&&N.msAtBeat(sq,1,4)==4000);
+const fg=mk('f','f','x','b',60,4,'C4:1f1 D4:1f2 C4+E4+G4:2f1+3+5','',1);ok('finger numbers carried in data',fg.notes[0].finger==1&&fg.notes[1].finger==2&&fg.notes.filter(x=>x.s==2).map(x=>x.finger).join()=='1,3,5');
+M=N.build(fg);ok('finger numbers reach the notation model',notes(M)[0].notes[0].finger==1);
+const lh=song('C3:2 C4:2','C3:4');ok('L/R staff assignment with crossing (RH low note → bass)',N.build(song('A2:2')).events.find(e=>!e.rest).staff=='B'&&N.build(song('','D5:2')).events.find(e=>!e.rest).staff=='T');
+// every note in notation maps back to an engine note index (single source of truth), and every engine note is shown
+SONGS.forEach(s=>{const M=N.build(s),idx=new Set(M.events.filter(e=>!e.rest).flatMap(e=>e.notes.map(x=>x.i)));ok('source of truth: '+s.id+' all '+s.notes.length+' engine notes appear in notation, pitches match',idx.size==s.notes.length&&M.events.every(e=>e.notes.every(x=>x.p==s.notes[x.i].p)))});
+ok('6/8 and G-major test songs present',SONGS.find(s=>s.id=='n1').ts[1]==8&&SONGS.find(s=>s.id=='n2').key=='G major'&&N.build(SONGS.find(s=>s.id=='n2')).events.filter(e=>!e.rest&&e.notes.some(x=>x.tieNext)).length==1);
+// render smoke test with mocked canvas: every song × mode × width, incl. state changes
+const src=h.slice(h.indexOf('function staff(C){'),h.indexOf('const kidx=')),ctx=new Proxy({},{get:(t,k)=>k in t?t[k]:k=='measureText'?()=>({width:10}):()=>{},set:(t,k,v)=>(t[k]=v,true)});
+let W=1000;const cv={getContext:()=>ctx,clientWidth:0},$=()=>cv,fit=()=>W,C={fg:'#000',mu:'#777',ac:'#44f',ok:'#0a0',bad:'#d00',R:'#27f',L:'#f80',bd:'#ccc'};let errs=0,frames=0;
+for(const s of SONGS)for(const mode of['demo','wait','perform'])for(const w of[360,700,1000,1400]){W=w;const S=new Session();S.setSong(s);S.mode=mode;S.start();S.playing=true;const req=nn=>S.req(nn),DB={cfg:{names:true}};
+ const staff=new Function('Notation','S','req','$','fit','DB','performance',src+';return staff')(N,S,req,$,fit,DB,performance);
+ try{for(const p of[0,.5,3.2,s.end/2,s.end-.1]){S.pos=p;if(mode!='demo'){S.noteOn(s.notes[0].p,90,0);S.noteOn(61,90,0)}S.st[1]=2;staff(C);frames++}}catch(e){errs++;console.log('render error',s.id,mode,w,e.message)}}
+ok(`render smoke: ${frames} frames, no exceptions`,errs==0&&frames>0);
+console.log(`\n${n-f}/${n} passed`);process.exit(f?1:0);

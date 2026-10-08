@@ -1,0 +1,42 @@
+// usage: node tests/engine.test.js ../piano-trainer.html   (tests the DOM-free engine in the app file)
+const fs=require('fs'),path=process.argv[2]||'piano-trainer.html',h=fs.readFileSync(path,'utf8');
+const js=h.split('<script>')[1].split('/*END*/')[0],vf=/function validate\(o\)\{[^\n]*\}/.exec(h)[0],store={},ls={getItem:k=>k in store?store[k]:null,setItem:(k,v)=>{store[k]=v}};
+const X=new Function('localStorage',js+';'+vf+';return{Session,Scoring,CFG,mk,Backend,validate,SPD}')(ls),{Session,Scoring,CFG,mk,Backend,validate}=X;
+let f=0,n=0;const ok=(t,c)=>{n++;if(!c){f++;console.log('FAIL',t)}else console.log('ok  ',t)};
+// 60 bpm @100% => 1 beat = 1000 ms
+const mkS=(song,o={})=>{const s=new Session();s.setSong(song);Object.assign(s,{mode:'perform',hands:'both',speed:1},o);s.start();s.pos=s.range()[0];s.playing=true;return s};
+const S1=mk('t','t','x','b',60,4,'C4:1','',1),CH=mk('c','c','x','b',60,4,'C4+E4+G4:4','',1),TWO=mk('h','h','x','b',60,4,'C4:2 D4:2','C3:4',1),
+S4=mk('s','s','x','b',60,4,'C4:1 D4:1 E4:1 F4:1 G4:1 A4:1 B4:1 C5:1','',1),D2=mk('d','d','x','b',60,4,'C4:2','',1);
+const c=60,e=64,g=67;let s,r;
+s=mkS(S1);r=s.noteOn(c,90,0);ok('1 single correct note',r.type=='hit'&&r.cls=='perfect'&&s.result().H==1);
+s=mkS(S1);r=s.noteOn(62,90,0);ok('2 wrong note, expected C4 reported',r.type=='wrong'&&r.expected[0]=='C4'&&s.W==1&&/C4/.test(s.msg));
+s=mkS(S1);s.advance(150);ok('3a not missed inside window',s.st[0]==0);s.advance(300);ok('3b missed after window',s.st[0]==2&&s.result().M==1);
+s=mkS(S1);s.pos=-.1;r=s.noteOn(c,90,0);ok('4 early -100 ms = good',Math.round(r.ms)==-100&&r.cls=='good');
+s=mkS(S1);s.pos=.15;r=s.noteOn(c,90,0);ok('5a late +150 ms = ok',Math.round(r.ms)==150&&r.cls=='ok');
+s=mkS(S1);s.pos=.25;r=s.noteOn(c,90,0);ok('5b far too late = not a hit',r.type=='wrong');
+s=mkS(CH);s.noteOn(c,90,0);s.pos=.03;s.noteOn(e,90,0);s.pos=.1;r=s.noteOn(g,90,0);ok('6 chord with spread arrival completes',r.type=='hit'&&s.result().H==3&&/chord/i.test(s.msg));
+s=mkS(CH);s.noteOn(c,90,0);s.pos=.02;s.noteOn(e,90,0);ok('7a partial chord: 2/3, G4 still needed',/2\/3/.test(s.msg)&&/G4/.test(s.msg));
+s.advance(1000);r=s.result();ok('7b partial chord scored per tone (not all-wrong)',r.H==2&&r.M==1&&r.W==0&&r.score>50&&/G4 missing/.test(s.msg));
+s=mkS(D2);s.noteOn(c,90,0);s.pos=.5;s.noteOff(c,0);ok('8a early release (ratio .25)',s.dur[0].cls=='early'&&s.dur[0].pts<1);
+s=mkS(D2);s.noteOn(c,90,0);s.pos=2;s.noteOff(c,0);ok('8b correct release',s.dur[0].cls=='ok'&&s.dur[0].pts==1);
+s=mkS(D2);s.noteOn(c,90,0);s.pos=6;s.noteOff(c,0);ok('8c held too long',s.dur[0].cls=='long'&&s.dur[0].pts<1&&s.dur[0].pts>0);
+s=mkS(D2);s.noteOn(c,90,0);s.sustain(true);s.pos=.3;s.noteOff(c,0);ok('9 sustain pedal forgives short key release',s.dur[0].pts==1);
+s=mkS(S4,{sec:1});ok('10a section range',s.range()[0]==4&&s.result().T==4);
+s=mkS(S4,{sec:1,loop:true,reps:2});let fin=[];s.cb={finish:(R,lp)=>fin.push(lp)};s.pos=4;s.advance(5000);ok('10b loop pass 1 restarts',fin.length==1&&fin[0]===true&&s.playing&&s.pos==4&&s.st.every(x=>!x));s.advance(5000);ok('10c loop stops after 2 reps',fin.length==2&&fin[1]===false&&!s.playing);
+s=mkS(S4,{sec:1,loop:true,reps:0,ramp:true,speed:.7});s.cb={finish:()=>{}};s.pos=4;S4.notes.forEach(n=>{if(n.s>=4){s.pos=n.s;s.noteOn(n.p,90,0);s.pos=n.s+n.d;s.noteOff(n.p,0)}});s.pos=7.99;s.advance(20);ok('10d ramp: tempo 70%→80% after good pass',s.speed==.8);
+s=mkS(S1,{speed:.5});ok('11a rate scales with speed',Math.abs(s.rate()-.0005)<1e-12);s.pos=.09;r=s.noteOn(c,90,0);ok('11b +180 ms at 50% speed still counts',r.type=='hit'&&Math.round(r.ms)==180);
+s=mkS(TWO,{hands:'L'});ok('12 left-hand: only LH required, RH note wrong',s.result().T==1&&s.noteOn(60,90,0).type=='wrong');
+s=mkS(TWO,{hands:'R'});ok('13 right-hand: only RH required',s.result().T==2&&s.noteOn(48,90,0).type=='wrong'&&s.noteOn(60,90,0).type=='hit');
+s=mkS(TWO,{hands:'R'});let pl=[];s.cb={play:n=>pl.push(n.h)};s.advance(100);ok('13b other hand plays as backing',pl.includes('L'));
+s=mkS(S4);S4.notes.forEach(n=>{s.pos=n.s;s.noteOn(n.p,90,0);s.pos=n.s+n.d;s.noteOff(n.p,0)});s.pos=7.99;s.advance(20);ok('14 perfect completion: Mastered, 3 stars',s.result().score>=97&&s.result().stars==3&&s.result().band=='Mastered');
+s=mkS(S4);S4.notes.forEach((n,i)=>{s.pos=n.s;if(i==3)s.noteOn(61,90,0);s.noteOn(n.p,90,0);s.pos=n.s+n.d;s.noteOff(n.p,0)});r=s.result();ok('15a one wrong note not punished harshly',r.W==1&&r.score>90);
+s=mkS(S4);s.advance(20000);r=s.result();ok('15b all missed: 0 / Needs practice / 0 stars',r.score==0&&r.band=='Needs practice'&&r.stars==0&&r.M==8);
+ok('15c bands',Scoring.band(59)=='Needs practice'&&Scoring.band(60)=='Developing'&&Scoring.band(75)=='Good'&&Scoring.band(90)=='Excellent'&&Scoring.band(97)=='Mastered');
+ok('15d weights 40/30/15/15',Object.values(CFG.w).reduce((a,b)=>a+b)==1&&Math.round(Scoring.total({note:1,timing:0,dur:0,cons:0}))==40);
+ok('15e stars 1=completed 2=good 3=excellent',Scoring.stars(50,true)==1&&Scoring.stars(80,true)==2&&Scoring.stars(95,true)==3&&Scoring.stars(95,false)==0);
+s=mkS(S4,{mode:'wait'});s.advance(3000);ok('learn mode holds at unplayed note',s.pos==0);s.noteOn(60,90,0);s.advance(500);ok('learn mode advances after correct note',s.pos>0&&s.pos<=1);
+s=mkS(S4,{mode:'demo'});pl=[];s.cb={play:n=>pl.push(n.p)};s.advance(1500);ok('demo plays notes automatically',pl.length>=2);
+Backend.save({xp:42,songs:{a:{best:90}}});const L=Backend.load();ok('16a progress save/load roundtrip',L.xp==42&&L.songs.a.best==90);
+store.kt1='{corrupt';ok('16b corrupt data → null, no throw',Backend.load()===null);
+let bad=0;for(const o of [null,{},{xp:'x',songs:{}},{xp:1}]){try{validate(o)}catch(e){bad++}}ok('16c import validation rejects bad files',bad==4&&validate({xp:1,songs:{}}).xp==1);
+console.log(`\n${n-f}/${n} passed`);process.exit(f?1:0);
